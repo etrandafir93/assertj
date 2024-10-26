@@ -12,13 +12,16 @@
  */
 package org.assertj.core.api.object;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.verify;
-
 import org.assertj.core.api.ObjectAssert;
 import org.assertj.core.api.ObjectAssertBaseTest;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.assertj.core.test.Jedi;
+import org.assertj.core.util.introspection.GetterInvocationError;
 import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.verify;
 
 /**
  * Tests for <code>{@link ObjectAssert#hasFieldOrPropertyWithValue(String, Object)}</code>.
@@ -46,6 +49,54 @@ class ObjectAssert_hasFieldOrPropertyWithValue_Test extends ObjectAssertBaseTest
     Jedi jedi = new Jedi(null, "Blue");
 
     assertThat(jedi).hasFieldOrPropertyWithValue(FIELD_NAME, null);
+  }
+
+  @Test
+  void should_fail_if_field_has_different_value() {
+    ThrowingCallable failingTest = () -> assertThat(new Jedi("Anakin", "blue"))
+                                                                               .hasFieldOrPropertyWithValue("name",
+                                                                                                            "Darth Vader");
+
+    assertThat(catchThrowable(failingTest))
+                                           .isInstanceOf(AssertionError.class)
+                                           .hasMessageContainingAll(
+                                                                    "Expecting",
+                                                                    "Anakin the Jedi",
+                                                                    "to have a property or a field named \"name\" with value",
+                                                                    "Darth Vader",
+                                                                    "but value was:",
+                                                                    "Anakin");
+  }
+
+  @Test
+  void should_fail_if_field_does_not_exist() {
+    ThrowingCallable failingTest = () -> assertThat(new Jedi("Anakin", "blue"))
+                                                                               .hasFieldOrPropertyWithValue("planet", "Tatooine");
+
+    assertThat(catchThrowable(failingTest))
+                                           .isInstanceOf(AssertionError.class)
+                                           .hasMessageContainingAll(
+                                                                    "Expecting",
+                                                                    "Anakin the Jedi",
+                                                                    "to have a property or a field named \"planet\"");
+  }
+
+  @Test
+  void should_fail_if_field_getter_invocation_fails() {
+    ThrowingCallable failingTest = () -> assertThat(new Sith())
+                                                               .hasFieldOrPropertyWithValue("name", "Tyranus");
+
+    assertThat(catchThrowable(failingTest))
+                                           .isInstanceOf(GetterInvocationError.class)
+                                           .hasMessageContaining(
+                                                                 "Encountered exception when invoking getter for 'name' in "
+                                                                 + Sith.class.getName());
+  }
+
+  static class Sith {
+    public String getName() {
+      throw new RuntimeException("dummy error!");
+    }
   }
 
 }

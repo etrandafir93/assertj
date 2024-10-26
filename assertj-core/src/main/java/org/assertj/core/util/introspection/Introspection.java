@@ -12,13 +12,10 @@
  */
 package org.assertj.core.util.introspection;
 
-import static java.lang.String.format;
-import static java.lang.reflect.Modifier.isPublic;
-import static java.util.Locale.ENGLISH;
-import static java.util.Objects.requireNonNull;
-import static org.assertj.core.util.Preconditions.checkNotNullOrEmpty;
-import static org.assertj.core.util.Strings.quote;
+import org.assertj.core.configuration.ConfigurationProvider;
+import org.assertj.core.util.VisibleForTesting;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Map;
@@ -26,8 +23,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.assertj.core.configuration.ConfigurationProvider;
-import org.assertj.core.util.VisibleForTesting;
+import static java.lang.String.format;
+import static java.lang.reflect.Modifier.isPublic;
+import static java.util.Locale.ENGLISH;
+import static java.util.Objects.requireNonNull;
+import static org.assertj.core.util.Preconditions.checkNotNullOrEmpty;
+import static org.assertj.core.util.Strings.quote;
 
 /**
  * Utility methods related to <a
@@ -60,17 +61,21 @@ public final class Introspection {
     requireNonNull(target);
     Method getter = findGetter(propertyName, target);
     if (getter == null) {
-      throw new IntrospectionError(propertyNotFoundErrorMessage("No getter for property %s in %s", propertyName, target));
+      throw new IntrospectionError(formatErrorMessage("No getter for property %s in %s", propertyName, target));
     }
     if (!isPublic(getter.getModifiers())) {
-      throw new IntrospectionError(propertyNotFoundErrorMessage("No public getter for property %s in %s", propertyName, target));
+      throw new IntrospectionError(formatErrorMessage("No public getter for property %s in %s", propertyName, target));
     }
     try {
       // force access for static class with public getter
       getter.setAccessible(true);
       getter.invoke(target);
+    } catch (InvocationTargetException t) {
+      throw new GetterInvocationError(formatErrorMessage("Encountered exception when invoking getter for %s in %s", propertyName,
+                                                         target),
+                                      t.getCause() != null ? t.getCause() : t);
     } catch (Exception t) {
-      throw new IntrospectionError(propertyNotFoundErrorMessage("Unable to find property %s in %s", propertyName, target), t);
+      throw new IntrospectionError(formatErrorMessage("Unable to find property %s in %s", propertyName, target), t);
     }
     return getter;
   }
@@ -85,7 +90,7 @@ public final class Introspection {
     return bareNamePropertyMethods;
   }
 
-  private static String propertyNotFoundErrorMessage(String message, String propertyName, Object target) {
+  private static String formatErrorMessage(String message, String propertyName, Object target) {
     String targetTypeName = target.getClass().getName();
     String property = quote(propertyName);
     return format(message, property, targetTypeName);
