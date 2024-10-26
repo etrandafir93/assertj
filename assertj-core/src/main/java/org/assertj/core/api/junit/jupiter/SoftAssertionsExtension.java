@@ -12,45 +12,32 @@
  */
 package org.assertj.core.api.junit.jupiter;
 
-import static java.lang.String.format;
-import static java.lang.reflect.Modifier.isAbstract;
-import static org.junit.platform.commons.support.AnnotationSupport.findAnnotation;
-import static org.junit.platform.commons.support.AnnotationSupport.isAnnotated;
-import static org.junit.platform.commons.support.ReflectionSupport.findFields;
-
-import java.lang.reflect.Executable;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.lang.reflect.Parameter;
-import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentLinkedQueue;
-
 import org.assertj.core.annotations.Beta;
-import org.assertj.core.api.AbstractSoftAssertions;
-import org.assertj.core.api.AssertionErrorCollector;
-import org.assertj.core.api.BDDSoftAssertions;
-import org.assertj.core.api.DefaultAssertionErrorCollector;
-import org.assertj.core.api.SoftAssertions;
-import org.assertj.core.api.SoftAssertionsProvider;
+import org.assertj.core.api.*;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
-import org.junit.jupiter.api.extension.AfterTestExecutionCallback;
-import org.junit.jupiter.api.extension.BeforeEachCallback;
-import org.junit.jupiter.api.extension.ExtensionConfigurationException;
-import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.*;
 import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
 import org.junit.jupiter.api.extension.ExtensionContext.Store;
-import org.junit.jupiter.api.extension.ParameterContext;
-import org.junit.jupiter.api.extension.ParameterResolutionException;
-import org.junit.jupiter.api.extension.ParameterResolver;
-import org.junit.jupiter.api.extension.TestInstancePostProcessor;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.junit.platform.commons.annotation.Testable;
 import org.junit.platform.commons.support.HierarchyTraversalMode;
 import org.junit.platform.commons.support.ReflectionSupport;
+import org.junit.platform.commons.util.ReflectionUtils;
+
+import java.lang.reflect.*;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+import static java.lang.String.format;
+import static java.lang.reflect.Modifier.isAbstract;
+import static org.junit.platform.commons.support.AnnotationSupport.findAnnotation;
+import static org.junit.platform.commons.support.AnnotationSupport.isAnnotated;
+import static org.junit.platform.commons.support.ReflectionSupport.findFields;
 
 /**
  * Extension for JUnit Jupiter that provides support for injecting a concrete implementation of {@link SoftAssertionsProvider}
@@ -68,7 +55,7 @@ import org.junit.platform.commons.support.ReflectionSupport;
  * This extension does not inject {@code SoftAssertionsProvider} arguments into test constructors or lifecycle methods.
  *
  * <h2>Scope</h2>
- *
+ * <p>
  * Annotated {@code SoftAssertionsProvider} fields become valid from the `@BeforeEach` lifecycle phase.
  * For parameters, they become are valid when the parameter is resolved.<br>
  * In the {@code afterTestExecution} phase (immediately after the test has returned, but before the {@code AfterEach} phase, all
@@ -78,7 +65,7 @@ import org.junit.platform.commons.support.ReflectionSupport;
  * assertion failures from all {@link SoftAssertionsProvider}s will be reported in the order that they failed.
  *
  * <h2>Integration with third-party extensions</h2>
- *
+ * <p>
  * Sometimes a third-party extension may wish to softly assert something as part of the main test. Or sometimes a third-party
  * extension may be a wrapper around another assertion library (eg, Mockito) and it would be nice for that library's soft
  * assertions to mix well with AssertJ's. This can be achieved through the use of the {@code SoftAssertionExtension}'s API.
@@ -229,14 +216,28 @@ public class SoftAssertionsExtension
     return context.getTestInstanceLifecycle().map(x -> x == Lifecycle.PER_CLASS).orElse(false);
   }
 
-  static boolean isAnnotatedConcurrent(ExtensionContext context) {
-    return findAnnotation(context.getRequiredTestClass(), Execution.class).map(Execution::value)
-                                                                          .map(x -> x == ExecutionMode.CONCURRENT)
-                                                                          .orElse(false);
+  static boolean isAnnotatedConcurrent(Class<?> requiredTestClass) {
+    return findAnnotation(requiredTestClass, Execution.class)
+                                                             .map(Execution::value)
+                                                             .map(x -> x == ExecutionMode.CONCURRENT)
+                                                             .orElse(false);
   }
 
   static boolean isPerClassConcurrent(ExtensionContext context) {
-    return isPerClass(context) && isAnnotatedConcurrent(context);
+    return isPerClass(context) && isAnnotatedConcurrent(context.getRequiredTestClass());
+  }
+
+  static boolean hasNestedWithPerClassConcurrent(Class<?> testClass) {
+    return ReflectionUtils.findNestedClasses(testClass, clazz -> isAnnotated(clazz, Nested.class))
+                          .stream()
+                          .filter(
+                                  clazz -> isAnnotatedConcurrent(clazz))
+                          .filter(
+                                  clazz -> findAnnotation(clazz, TestInstance.class)
+                                                                                    .map(TestInstance::value)
+                                                                                    .map(x -> x == Lifecycle.PER_CLASS)
+                                                                                    .orElse(false))
+                          .findAny().isPresent();
   }
 
   @Override
@@ -245,12 +246,14 @@ public class SoftAssertionsExtension
     Collection<Field> softAssertionsFields = findFields(testInstance.getClass(),
                                                         field -> isAnnotated(field, InjectSoftAssertions.class),
                                                         HierarchyTraversalMode.BOTTOM_UP);
+
     for (Field softAssertionsField : softAssertionsFields) {
       checkIsNotStaticOrFinal(softAssertionsField);
       Class<? extends SoftAssertionsProvider> softAssertionsProviderClass = asSoftAssertionsProviderClass(softAssertionsField,
                                                                                                           softAssertionsField.getType());
       checkIsNotAbstract(softAssertionsField, softAssertionsProviderClass);
       checkHasDefaultConstructor(softAssertionsField, softAssertionsProviderClass);
+
       SoftAssertionsProvider softAssertions = getSoftAssertionsProvider(context, softAssertionsProviderClass);
       setTestInstanceSoftAssertionsField(testInstance, softAssertionsField, softAssertions);
     }
@@ -322,7 +325,11 @@ public class SoftAssertionsExtension
   @Override
   public void afterTestExecution(ExtensionContext extensionContext) {
     AssertionErrorCollector collector;
-    if (isPerClassConcurrent(extensionContext)) {
+    boolean pc = isPerClassConcurrent(extensionContext);
+
+    System.err.println("AFTER: " + pc);
+
+    if (pc) {
       ThreadLocalErrorCollector tlec = getThreadLocalCollector(extensionContext);
       collector = tlec.getDelegate()
                       .orElseThrow(() -> new IllegalStateException("Expecting delegate to be present for current context"));
@@ -420,8 +427,8 @@ public class SoftAssertionsExtension
    * }</code>
    * </pre>
    *
-   * @param <T> the type of {@link SoftAssertionsProvider} to instantiate.
-   * @param context the {@code ExtensionContext} whose error collector we are attempting to retrieve.
+   * @param <T>                                the type of {@link SoftAssertionsProvider} to instantiate.
+   * @param context                            the {@code ExtensionContext} whose error collector we are attempting to retrieve.
    * @param concreteSoftAssertionsProviderType the class instance for the type of soft assertions
    * @return The {@code AssertionErrorCollector} for the given context.
    */
